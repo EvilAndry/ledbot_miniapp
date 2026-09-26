@@ -1,0 +1,381 @@
+<!doctype html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>LED-панель</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+  :root {
+    --bg: var(--tg-theme-secondary-bg-color, #f1f2f6);
+    --card: var(--tg-theme-section-bg-color, var(--tg-theme-bg-color, #ffffff));
+    --text: var(--tg-theme-text-color, #16181d);
+    --hint: var(--tg-theme-hint-color, #8b919c);
+    --accent: var(--tg-theme-button-color, #2f7cf6);
+    --accent-text: var(--tg-theme-button-text-color, #ffffff);
+    --line: color-mix(in srgb, var(--hint) 22%, transparent);
+    --radius: 16px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: var(--tg-theme-secondary-bg-color, #0f1217);
+      --card: var(--tg-theme-section-bg-color, var(--tg-theme-bg-color, #1a1f27));
+      --text: var(--tg-theme-text-color, #eef1f5);
+      --hint: var(--tg-theme-hint-color, #7d8591);
+    }
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; background: var(--bg); color: var(--text);
+    font: 15px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 480px; margin: 0 auto; padding: 12px 16px 96px; display: grid; gap: 12px; }
+
+  .card { background: var(--card); border-radius: var(--radius); padding: 16px; }
+  .card h2 { margin: 0 0 12px; font-size: 13px; font-weight: 600; letter-spacing: .04em;
+    text-transform: uppercase; color: var(--hint); display: flex; justify-content: space-between; }
+  .card h2 output { color: var(--text); text-transform: none; letter-spacing: 0; font-variant-numeric: tabular-nums; }
+
+  /* header */
+  .head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .head h1 { margin: 0; font-size: 20px; }
+  .head small { color: var(--hint); display: block; font-size: 13px; }
+  .switch { position: relative; width: 56px; height: 32px; flex: none; }
+  .switch input { position: absolute; inset: 0; opacity: 0; margin: 0; cursor: pointer; z-index: 1; }
+  .switch span { position: absolute; inset: 0; border-radius: 99px; background: var(--line); transition: background .2s; }
+  .switch span::after { content: ""; position: absolute; top: 3px; left: 3px; width: 26px; height: 26px;
+    border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.3); transition: transform .2s; }
+  .switch input:checked + span { background: var(--accent); }
+  .switch input:checked + span::after { transform: translateX(24px); }
+
+  /* strip preview */
+  .strip { display: flex; gap: 3px; margin-top: 14px; padding: 8px; border-radius: 10px; background: #0b0d10; }
+  .strip i { flex: 1; aspect-ratio: 1; border-radius: 50%; background: #222; }
+
+  /* color */
+  .wheel-wrap { position: relative; width: min(100%, 260px); aspect-ratio: 1; margin: 0 auto; touch-action: none; }
+  .wheel-wrap canvas { width: 100%; height: 100%; display: block; border-radius: 50%; cursor: crosshair; }
+  .knob { position: absolute; width: 28px; height: 28px; margin: -14px 0 0 -14px; border-radius: 50%;
+    border: 3px solid #fff; box-shadow: 0 0 0 1px rgba(0,0,0,.25), 0 2px 6px rgba(0,0,0,.35); pointer-events: none; }
+  .color-row { display: flex; align-items: center; gap: 10px; margin-top: 16px; }
+  .swatch { width: 44px; height: 44px; border-radius: 12px; flex: none; box-shadow: inset 0 0 0 1px var(--line); }
+  .hex { flex: 1; min-width: 0; height: 44px; border-radius: 12px; border: 1px solid var(--line); background: transparent;
+    color: var(--text); font: 600 17px ui-monospace, SFMono-Regular, Menlo, monospace; padding: 0 12px; text-transform: uppercase; }
+  .hex:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  .presets { display: grid; grid-template-columns: repeat(8, 1fr); gap: 8px; margin-top: 12px; }
+  .presets button { aspect-ratio: 1; border-radius: 50%; border: 0; cursor: pointer; box-shadow: inset 0 0 0 1px rgba(0,0,0,.15); }
+  .presets button.on { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .note { margin: 12px 0 0; font-size: 13px; color: var(--hint); }
+  .dim { opacity: .45; }
+
+  /* sliders */
+  input[type=range] { -webkit-appearance: none; appearance: none; width: 100%; height: 28px; background: transparent; margin: 0; }
+  input[type=range]::-webkit-slider-runnable-track { height: 6px; border-radius: 3px;
+    background: linear-gradient(to right, var(--accent) var(--fill, 50%), var(--line) var(--fill, 50%)); }
+  input[type=range]::-moz-range-track { height: 6px; border-radius: 3px; background: var(--line); }
+  input[type=range]::-moz-range-progress { height: 6px; border-radius: 3px; background: var(--accent); }
+  input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 24px; height: 24px; margin-top: -9px;
+    border-radius: 50%; background: #fff; box-shadow: 0 1px 4px rgba(0,0,0,.35); }
+  input[type=range]::-moz-range-thumb { width: 24px; height: 24px; border: 0; border-radius: 50%; background: #fff;
+    box-shadow: 0 1px 4px rgba(0,0,0,.35); }
+
+  /* modes */
+  .modes { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .modes button { height: 44px; border-radius: 12px; border: 1px solid var(--line); background: transparent;
+    color: var(--text); font: inherit; cursor: pointer; }
+  .modes button.on { background: var(--accent); border-color: var(--accent); color: var(--accent-text); font-weight: 600; }
+
+  .count-row { display: flex; gap: 10px; align-items: center; }
+  .count-row input[type=number] { width: 84px; height: 40px; border-radius: 10px; border: 1px solid var(--line);
+    background: transparent; color: var(--text); font: inherit; text-align: center; }
+
+  .apply { position: fixed; left: 16px; right: 16px; bottom: 16px; max-width: 448px; margin: 0 auto; height: 50px;
+    border: 0; border-radius: 12px; background: var(--accent); color: var(--accent-text); font: 600 16px inherit; cursor: pointer; }
+  .apply[hidden] { display: none; }
+</style>
+</head>
+<body>
+<main>
+  <section class="card">
+    <div class="head">
+      <div>
+        <h1>💡 LED-стрічка</h1>
+        <small id="summary"></small>
+      </div>
+      <label class="switch" aria-label="Увімкнути / вимкнути">
+        <input type="checkbox" id="power"><span></span>
+      </label>
+    </div>
+    <div class="strip" id="strip"></div>
+  </section>
+
+  <section class="card" id="colorCard">
+    <h2>Колір</h2>
+    <div class="wheel-wrap" id="wheelWrap">
+      <canvas id="wheel"></canvas>
+      <div class="knob" id="knob"></div>
+    </div>
+    <div class="color-row">
+      <div class="swatch" id="swatch"></div>
+      <input class="hex" id="hex" maxlength="7" spellcheck="false" autocomplete="off" inputmode="text">
+    </div>
+    <div class="presets" id="presets"></div>
+    <p class="note" id="colorNote" hidden>Поточний режим не використовує колір — вибір кольору перемкне на «Статичний».</p>
+  </section>
+
+  <section class="card">
+    <h2>Яскравість <output id="briOut"></output></h2>
+    <input type="range" id="bri" min="1" max="100">
+  </section>
+
+  <section class="card">
+    <h2>Режим</h2>
+    <div class="modes" id="modes"></div>
+  </section>
+
+  <section class="card" id="speedCard">
+    <h2>Швидкість <output id="spdOut"></output></h2>
+    <input type="range" id="spd" min="1" max="100">
+  </section>
+
+  <section class="card">
+    <h2>Кількість діодів <output id="cntOut"></output></h2>
+    <div class="count-row">
+      <input type="range" id="cnt" min="1">
+      <input type="number" id="cntNum" min="1" inputmode="numeric">
+    </div>
+  </section>
+</main>
+<button class="apply" id="applyBtn" hidden>Застосувати</button>
+
+<script>
+(() => {
+  // Must match led_effects.c order
+  const MODES = [
+    { name: "Статичний",      color: true  },
+    { name: "Веселка",        color: false },
+    { name: "Зміна кольорів", color: false },
+    { name: "Дихання",        color: true  },
+    { name: "Комета",         color: true  },
+    { name: "Заповнення",     color: true  },
+    { name: "Мерехтіння",     color: true  },
+    { name: "Конфетті",       color: false },
+    { name: "Вогонь",         color: false },
+    { name: "Стробоскоп",     color: true  },
+  ];
+  const PRESETS = ["FF0000","FF5000","FFC800","00FF00","00C8FF","0000FF","9600FF","FF2080",
+                   "FFFFFF","FFA03C","FF7F50","7FFF00","00FFB4","40E0D0","FF00FF","B4FF00"];
+
+  const tg = window.Telegram && window.Telegram.WebApp;
+  const inTelegram = !!tg && tg.platform && tg.platform !== "unknown";
+  const $ = id => document.getElementById(id);
+
+  // ---------- state from URL (?p=1&c=FF8800&b=50&m=0&s=50&n=60&max=300)
+  const q = new URLSearchParams(location.search);
+  const num = (k, d, lo, hi) => { const v = parseInt(q.get(k), 10); return isNaN(v) ? d : Math.min(hi, Math.max(lo, v)); };
+  const max = num("max", 300, 1, 5000);
+  const st = {
+    p: num("p", 1, 0, 1),
+    c: /^[0-9a-f]{6}$/i.test(q.get("c") || "") ? q.get("c").toUpperCase() : "FFA03C",
+    b: num("b", 50, 1, 100),
+    m: num("m", 0, 0, MODES.length - 1),
+    s: num("s", 50, 1, 100),
+    n: num("n", Math.min(60, max), 1, max),
+  };
+
+  // ---------- color math
+  const hexToRgb = h => [0, 2, 4].map(i => parseInt(h.substr(i, 2), 16));
+  const rgbToHex = (r, g, b) => [r, g, b].map(v => Math.round(v).toString(16).padStart(2, "0")).join("").toUpperCase();
+  function hsvToRgb(h, s, v) {
+    const f = n => { const k = (n + h / 60) % 6; return v * (1 - s * Math.max(0, Math.min(k, 4 - k, 1))) * 255; };
+    return [f(5), f(3), f(1)];
+  }
+  function rgbToHsv(r, g, b) {
+    r /= 255; g /= 255; b /= 255;
+    const mx = Math.max(r, g, b), mn = Math.min(r, g, b), d = mx - mn;
+    let h = 0;
+    if (d) h = mx === r ? ((g - b) / d) % 6 : mx === g ? (b - r) / d + 2 : (r - g) / d + 4;
+    return [(h * 60 + 360) % 360, mx ? d / mx : 0, mx];
+  }
+
+  // ---------- color wheel
+  const wheel = $("wheel"), wrap = $("wheelWrap"), knob = $("knob");
+  function drawWheel() {
+    const dpr = window.devicePixelRatio || 1;
+    const size = Math.round(wrap.clientWidth * dpr);
+    if (!size) return;
+    wheel.width = wheel.height = size;
+    const ctx = wheel.getContext("2d");
+    const img = ctx.createImageData(size, size);
+    const r = size / 2;
+    for (let y = 0; y < size; y++) {
+      for (let x = 0; x < size; x++) {
+        const dx = x + 0.5 - r, dy = y + 0.5 - r, d = Math.hypot(dx, dy);
+        if (d > r) continue;
+        const [R, G, B] = hsvToRgb((Math.atan2(dy, dx) * 180 / Math.PI + 360) % 360, d / r, 1);
+        const i = (y * size + x) * 4;
+        img.data[i] = R; img.data[i + 1] = G; img.data[i + 2] = B;
+        img.data[i + 3] = Math.min(1, r - d) * 255;   // antialiased edge
+      }
+    }
+    ctx.putImageData(img, 0, 0);
+    placeKnob();
+  }
+  function placeKnob() {
+    const [h, s] = rgbToHsv(...hexToRgb(st.c));
+    const r = wrap.clientWidth / 2, a = h * Math.PI / 180;
+    knob.style.left = (r + Math.cos(a) * s * r) + "px";
+    knob.style.top = (r + Math.sin(a) * s * r) + "px";
+    knob.style.background = "#" + st.c;
+  }
+  function pickAt(ev) {
+    const rect = wrap.getBoundingClientRect(), r = rect.width / 2;
+    const dx = ev.clientX - rect.left - r, dy = ev.clientY - rect.top - r;
+    const s = Math.min(1, Math.hypot(dx, dy) / r);
+    const h = (Math.atan2(dy, dx) * 180 / Math.PI + 360) % 360;
+    setColor(rgbToHex(...hsvToRgb(h, s, 1)), false);
+  }
+  let dragging = false;
+  wrap.addEventListener("pointerdown", e => { dragging = true; wrap.setPointerCapture(e.pointerId); pickAt(e); });
+  wrap.addEventListener("pointermove", e => { if (dragging) pickAt(e); });
+  const stop = () => { if (dragging) { dragging = false; haptic(); } };
+  wrap.addEventListener("pointerup", stop);
+  wrap.addEventListener("pointercancel", stop);
+
+  function setColor(hex, fromInput) {
+    st.c = hex;
+    if (!MODES[st.m].color) st.m = 0;   // same rule as the bot: color implies a color mode
+    st.p = 1;
+    if (!fromInput) $("hex").value = "#" + hex;
+    render();
+  }
+  $("hex").addEventListener("input", e => {
+    const v = e.target.value.trim().replace(/^#/, "");
+    if (/^[0-9a-f]{6}$/i.test(v)) setColor(v.toUpperCase(), true);
+  });
+  $("hex").addEventListener("blur", () => { $("hex").value = "#" + st.c; });
+
+  const presets = $("presets");
+  PRESETS.forEach(c => {
+    const b = document.createElement("button");
+    b.style.background = "#" + c;
+    b.dataset.c = c;
+    b.setAttribute("aria-label", "#" + c);
+    b.onclick = () => { setColor(c, false); haptic(); };
+    presets.appendChild(b);
+  });
+
+  // ---------- modes
+  const modes = $("modes");
+  MODES.forEach((m, i) => {
+    const b = document.createElement("button");
+    b.textContent = m.name;
+    b.onclick = () => { st.m = i; st.p = 1; haptic(); render(); };
+    modes.appendChild(b);
+  });
+
+  // ---------- sliders
+  function bindRange(id, key, outId, fmt) {
+    const el = $(id);
+    el.value = st[key];
+    el.addEventListener("input", () => { st[key] = +el.value; render(); });
+    return () => {
+      el.value = st[key];
+      el.style.setProperty("--fill", ((st[key] - el.min) / (el.max - el.min) * 100) + "%");
+      $(outId).textContent = fmt(st[key]);
+    };
+  }
+  $("cnt").max = max;
+  $("cntNum").max = max;
+  const syncBri = bindRange("bri", "b", "briOut", v => v + "%");
+  const syncSpd = bindRange("spd", "s", "spdOut", v => v);
+  const syncCnt = bindRange("cnt", "n", "cntOut", v => v + " з " + max);
+  $("cntNum").addEventListener("change", e => {
+    st.n = Math.min(max, Math.max(1, parseInt(e.target.value, 10) || 1));
+    render();
+  });
+  $("power").addEventListener("change", e => { st.p = e.target.checked ? 1 : 0; haptic(); render(); });
+
+  // ---------- render
+  function render() {
+    $("power").checked = !!st.p;
+    $("swatch").style.background = "#" + st.c;
+    if (document.activeElement !== $("hex")) $("hex").value = "#" + st.c;
+    placeKnob();
+    presets.querySelectorAll("button").forEach(b => b.classList.toggle("on", b.dataset.c === st.c));
+    modes.querySelectorAll("button").forEach((b, i) => b.classList.toggle("on", i === st.m));
+    const usesColor = MODES[st.m].color;
+    $("colorNote").hidden = usesColor;
+    $("colorCard").querySelector(".wheel-wrap").classList.toggle("dim", !usesColor);
+    $("speedCard").classList.toggle("dim", st.m === 0);
+    syncBri(); syncSpd(); syncCnt();
+    $("cntNum").value = st.n;
+    $("summary").textContent = (st.p ? "Увімкнено" : "Вимкнено") + " · " + MODES[st.m].name;
+  }
+
+  // ---------- animated preview (approximation of firmware effects)
+  const DOTS = 24, strip = $("strip");
+  const dots = Array.from({ length: DOTS }, () => strip.appendChild(document.createElement("i")));
+  const sparkle = new Float32Array(DOTS), sparkHue = new Float32Array(DOTS);
+  let phase = 0, last = performance.now();
+  function frame(now) {
+    const dt = Math.min(100, now - last); last = now;
+    phase += dt * st.s;
+    const lit = Math.max(1, Math.round(DOTS * st.n / max));
+    const base = hexToRgb(st.c), bri = Math.max(0.08, (st.b / 100) ** 2);
+    for (let i = 0; i < DOTS; i++) {
+      let rgb = [0, 0, 0], k = 1;
+      if (st.p && i < lit) {
+        switch (st.m) {
+          case 0: rgb = base; break;
+          case 1: rgb = hsvToRgb((phase / 1000 * 360 / 256 + i * 360 / lit) % 360, 1, 1); break;
+          case 2: rgb = hsvToRgb((phase / 1000 * 360 / 256) % 360, 1, 1); break;
+          case 3: rgb = base; k = 0.05 + 0.95 * ((1 - Math.cos(phase / 400 / 256 * 2 * Math.PI)) / 2) ** 2; break;
+          case 4: { const head = Math.floor(phase / 1000 * lit / 60) % lit, d = (head - i + lit) % lit, t = Math.max(3, lit / 5);
+                    rgb = base; k = d < t ? ((t - d) / t) ** 2 : 0; break; }
+          case 5: { const step = Math.floor(phase / 1500 * lit / 60) % (2 * lit);
+                    rgb = base; k = (step < lit ? i <= step : i > step - lit) ? 1 : 0; break; }
+          case 6: case 7:
+            if (sparkle[i] <= 0 && Math.random() < 0.004 * st.s / 10) { sparkle[i] = 1; sparkHue[i] = Math.random() * 360; }
+            sparkle[i] = Math.max(0, sparkle[i] - dt / 900);
+            rgb = st.m === 6 ? base : hsvToRgb(sparkHue[i], 1, 1); k = sparkle[i] ** 2; break;
+          case 8: { const h = 0.55 + 0.45 * Math.sin(phase / 3000 + i * 1.7) * Math.sin(phase / 1700 + i);
+                    rgb = [255, 90 + 120 * h * (1 - i / lit), 20 * h]; k = 0.35 + 0.65 * h * (1 - i / lit / 1.5); break; }
+          case 9: rgb = base; k = Math.floor(phase / 4000) % 2 ? 0 : 1; break;
+        }
+      }
+      const [r, g, b] = rgb.map(v => Math.round(v * k * bri));
+      dots[i].style.background = (r + g + b) ? `rgb(${r},${g},${b})` : "#1c1f24";
+      dots[i].style.boxShadow = (r + g + b) > 60 ? `0 0 8px rgb(${r},${g},${b})` : "none";
+    }
+    requestAnimationFrame(frame);
+  }
+
+  // ---------- telegram glue
+  function haptic() { try { tg && tg.HapticFeedback && tg.HapticFeedback.selectionChanged(); } catch (_) {} }
+  function apply() {
+    const data = JSON.stringify({ p: st.p, c: st.c, b: st.b, m: st.m, s: st.s, n: st.n });
+    if (inTelegram) {
+      tg.sendData(data);   // closes the Mini App; bot receives message.web_app_data
+    } else {
+      alert("Поза Telegram. Дані, які були б надіслані боту:\n" + data);
+    }
+  }
+
+  if (inTelegram) {
+    tg.ready();
+    tg.expand();
+    if (tg.disableVerticalSwipes) tg.disableVerticalSwipes();  // don't close app while dragging on the wheel
+    tg.MainButton.setText("Застосувати");
+    tg.MainButton.onClick(apply);
+    tg.MainButton.show();
+  } else {
+    $("applyBtn").hidden = false;
+    $("applyBtn").onclick = apply;
+  }
+
+  new ResizeObserver(drawWheel).observe(wrap);
+  render();
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
