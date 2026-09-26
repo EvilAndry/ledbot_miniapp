@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
 <title>LED-панель</title>
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/mqtt@5/dist/mqtt.min.js"></script>
 <style>
   :root {
     --bg: var(--tg-theme-secondary-bg-color, #f1f2f6);
@@ -87,6 +88,12 @@
   .count-row input[type=number] { width: 84px; height: 40px; border-radius: 10px; border: 1px solid var(--line);
     background: transparent; color: var(--text); font: inherit; text-align: center; }
 
+  .status { display: inline-flex; align-items: center; gap: 6px; margin-top: 6px; padding: 2px 9px;
+    border-radius: 99px; font-size: 12px; font-weight: 500; color: var(--hint); background: var(--line); }
+  .status::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+  .status.on { color: #1f9d55; background: rgba(31, 157, 85, .14); }
+  .status.wait { color: #c98a00; background: rgba(201, 138, 0, .14); }
+
   .apply { position: fixed; left: 16px; right: 16px; bottom: 16px; max-width: 448px; margin: 0 auto; height: 50px;
     border: 0; border-radius: 12px; background: var(--accent); color: var(--accent-text); font: 600 16px inherit; cursor: pointer; }
   .apply[hidden] { display: none; }
@@ -99,6 +106,7 @@
       <div>
         <h1>💡 LED-стрічка</h1>
         <small id="summary"></small>
+        <span class="status" id="status"></span>
       </div>
       <label class="switch" aria-label="Увімкнути / вимкнути">
         <input type="checkbox" id="power"><span></span>
@@ -245,7 +253,7 @@
     if (!MODES[st.m].color) st.m = 0;   // same rule as the bot: color implies a color mode
     st.p = 1;
     if (!fromInput) $("hex").value = "#" + hex;
-    render();
+    changed();
   }
   $("hex").addEventListener("input", e => {
     const v = e.target.value.trim().replace(/^#/, "");
@@ -268,7 +276,7 @@
   MODES.forEach((m, i) => {
     const b = document.createElement("button");
     b.textContent = m.name;
-    b.onclick = () => { st.m = i; st.p = 1; haptic(); render(); };
+    b.onclick = () => { st.m = i; st.p = 1; haptic(); changed(); };
     modes.appendChild(b);
   });
 
@@ -276,7 +284,7 @@
   function bindRange(id, key, outId, fmt) {
     const el = $(id);
     el.value = st[key];
-    el.addEventListener("input", () => { st[key] = +el.value; render(); });
+    el.addEventListener("input", () => { st[key] = +el.value; changed(); });
     return () => {
       el.value = st[key];
       el.style.setProperty("--fill", ((st[key] - el.min) / (el.max - el.min) * 100) + "%");
@@ -290,9 +298,9 @@
   const syncCnt = bindRange("cnt", "n", "cntOut", v => v + " з " + max);
   $("cntNum").addEventListener("change", e => {
     st.n = Math.min(max, Math.max(1, parseInt(e.target.value, 10) || 1));
-    render();
+    changed();
   });
-  $("power").addEventListener("change", e => { st.p = e.target.checked ? 1 : 0; haptic(); render(); });
+  $("power").addEventListener("change", e => { st.p = e.target.checked ? 1 : 0; haptic(); changed(); });
 
   // ---------- render
   function render() {
@@ -349,14 +357,108 @@
     requestAnimationFrame(frame);
   }
 
+  // ---------- live link: MQTT over WSS, every command signed with the user's key
+  // Message format (must match panel_link.c): "<uid>|<ts_ms>|<json>|<hex HMAC-SHA256>"
+  const U = q.get("u"), K = q.get("k"), T = q.get("t"), W = q.get("w");
+  const liveCapable = !!(U && /^[0-9a-f]{64}$/i.test(K || "") && T && W &&
+                         window.mqtt && window.crypto && crypto.subtle);
+  const enc = new TextEncoder();
+  const keyP = liveCapable
+    ? crypto.subtle.importKey("raw", new Uint8Array(K.match(/../g).map(h => parseInt(h, 16))),
+                              { name: "HMAC", hash: "SHA-256" }, false, ["sign"])
+    : null;
+  let client = null, brokerUp = false, deviceUp = null, connecting = liveCapable;
+  let lastLocal = 0, lastTs = 0, sendTimer = null, sendPending = false;
+
+  const isLive = () => liveCapable && brokerUp && deviceUp !== false;
+
+  function changed() {
+    lastLocal = Date.now();
+    render();
+    if (isLive()) {
+      sendPending = true;
+      if (!sendTimer) sendTimer = setTimeout(flushSend, 100);   // throttle while dragging
+    }
+  }
+
+  async function flushSend() {
+    sendTimer = null;
+    if (!sendPending || !isLive()) return;
+    sendPending = false;
+    const json = JSON.stringify({ p: st.p, c: st.c, b: st.b, m: st.m, s: st.s, n: st.n });
+    const ts = lastTs = Math.max(Date.now(), lastTs + 1);
+    const body = `${U}|${ts}|${json}`;
+    const sig = new Uint8Array(await crypto.subtle.sign("HMAC", await keyP, enc.encode(body)));
+    client.publish(T + "/cmd", body + "|" + [...sig].map(b => b.toString(16).padStart(2, "0")).join(""));
+  }
+
+  function applyRemoteState(text) {
+    // Don't fight the user: ignore echoes while they are interacting
+    if (dragging || sendPending || Date.now() - lastLocal < 1500) return;
+    let d;
+    try { d = JSON.parse(text); } catch (_) { return; }
+    const int = (v, lo, hi) => Number.isInteger(v) && v >= lo && v <= hi;
+    if (int(d.p, 0, 1)) st.p = d.p;
+    if (int(d.b, 1, 100)) st.b = d.b;
+    if (int(d.m, 0, MODES.length - 1)) st.m = d.m;
+    if (int(d.s, 1, 100)) st.s = d.s;
+    if (int(d.n, 1, max)) st.n = d.n;
+    if (typeof d.c === "string" && /^[0-9a-f]{6}$/i.test(d.c)) st.c = d.c.toUpperCase();
+    render();
+  }
+
+  function setStatus() {
+    const el = $("status");
+    let cls = "off", txt = "Режим «Застосувати»";
+    if (liveCapable) {
+      if (!brokerUp) { cls = "wait"; txt = connecting ? "Підключення…" : "Немає зв'язку"; }
+      else if (deviceUp === false) { txt = "Стрічка офлайн"; }
+      else { cls = "on"; txt = "Онлайн · зміни застосовуються одразу"; }
+    }
+    el.className = "status " + cls;
+    el.textContent = txt;
+
+    // "Apply" is only a fallback when the live link is unavailable
+    const fallback = !isLive() && !connecting;
+    if (inTelegram) {
+      if (fallback) tg.MainButton.setText("Застосувати").show(); else tg.MainButton.hide();
+    } else {
+      $("applyBtn").hidden = !fallback;
+    }
+  }
+
+  if (liveCapable) {
+    client = mqtt.connect(W, {
+      clientId: "ledpanel-" + Math.random().toString(16).slice(2, 10),
+      clean: true, reconnectPeriod: 2000, connectTimeout: 10000,
+    });
+    client.on("connect", () => {
+      brokerUp = true;
+      client.subscribe([T + "/state", T + "/online"]);
+      setStatus();
+    });
+    const down = () => { if (brokerUp) { brokerUp = false; setStatus(); } };
+    client.on("close", down);
+    client.on("offline", down);
+    client.on("message", (topic, payload) => {
+      const text = payload.toString();
+      if (topic === T + "/online") { deviceUp = text === "1"; setStatus(); }
+      else if (topic === T + "/state") applyRemoteState(text);
+    });
+    setTimeout(() => { connecting = false; setStatus(); }, 6000);
+  }
+
   // ---------- telegram glue
   function haptic() { try { tg && tg.HapticFeedback && tg.HapticFeedback.selectionChanged(); } catch (_) {} }
   function apply() {
     const data = JSON.stringify({ p: st.p, c: st.c, b: st.b, m: st.m, s: st.s, n: st.n });
-    if (inTelegram) {
-      tg.sendData(data);   // closes the Mini App; bot receives message.web_app_data
-    } else {
+    if (!inTelegram) {
       alert("Поза Telegram. Дані, які були б надіслані боту:\n" + data);
+    } else if (tg.initData) {
+      // Opened from an inline/menu button: sendData() is only available for keyboard buttons
+      tg.showAlert("Немає зв'язку зі стрічкою. Спробуйте пізніше або відкрийте панель кнопкою «Панель керування» внизу чату.");
+    } else {
+      tg.sendData(data);   // closes the Mini App; bot receives message.web_app_data
     }
   }
 
@@ -364,16 +466,14 @@
     tg.ready();
     tg.expand();
     if (tg.disableVerticalSwipes) tg.disableVerticalSwipes();  // don't close app while dragging on the wheel
-    tg.MainButton.setText("Застосувати");
     tg.MainButton.onClick(apply);
-    tg.MainButton.show();
   } else {
-    $("applyBtn").hidden = false;
     $("applyBtn").onclick = apply;
   }
 
   new ResizeObserver(drawWheel).observe(wrap);
   render();
+  setStatus();
   requestAnimationFrame(frame);
 })();
 </script>
